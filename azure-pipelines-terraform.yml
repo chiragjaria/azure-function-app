@@ -8,6 +8,7 @@ variables:
   terraformVersion: '1.7.0'
   workingDir: '$(System.DefaultWorkingDirectory)/terraform'
   functionAppName: 'func-fastapi-dev-cj'
+  resourceGroup: 'rgp-dev-mes'
 
 stages:
 # ================= TERRAFORM =================
@@ -29,8 +30,8 @@ stages:
         command: init
         workingDirectory: $(workingDir)
         backendServiceArm: azure-service-connection
-        backendAzureRmResourceGroupName: rgp-dev-mes
-        backendAzureRmStorageAccountName: stmesdev123    # ← your actual storage name
+        backendAzureRmResourceGroupName: $(resourceGroup)
+        backendAzureRmStorageAccountName: stmesdev123
         backendAzureRmContainerName: tfstate
         backendAzureRmKey: functions.terraform.tfstate
 
@@ -51,9 +52,9 @@ stages:
         environmentServiceNameAzureRM: azure-service-connection
         commandOptions: '-auto-approve'
 
-# ================= DEPLOY FUNCTION CODE =================
-- stage: DeployFunctionCode
-  displayName: Deploy Function App Code
+# ================= DEPLOY TO STAGING =================
+- stage: DeployStaging
+  displayName: Deploy to Staging Slot
   dependsOn: TerraformDeploy
   jobs:
   - job: DeployJob
@@ -64,12 +65,10 @@ stages:
       inputs:
         versionSpec: '3.10'
 
-    # Install dependencies
     - script: |
         pip install --target="$(System.DefaultWorkingDirectory)/.python_packages/lib/site-packages" -r requirements.txt
       displayName: Install dependencies
 
-    # Zip the function app for deployment
     - task: ArchiveFiles@2
       displayName: Zip function app
       inputs:
@@ -82,13 +81,112 @@ stages:
           $(System.DefaultWorkingDirectory)/terraform
           $(System.DefaultWorkingDirectory)/.git
 
-    # Deploy zip to Function App
+    # Deploy to STAGING slot — not production yet
     - task: AzureFunctionApp@2
-      displayName: Deploy to Azure Function App
+      displayName: Deploy to Staging slot
       inputs:
         connectedServiceNameARM: azure-service-connection
         appType: functionAppLinux
         appName: $(functionAppName)
+        deployToSlotOrASE: true
+        resourceGroupName: $(resourceGroup)
+        slotName: staging                         # ← staging slot
         package: $(Build.ArtifactStagingDirectory)/function.zip
         runtimeStack: PYTHON|3.10
         deploymentMethod: zipDeploy
+
+    # Tag staging with build ID
+    - task: AzureCLI@2
+      displayName: Tag staging version
+      inputs:
+        azureSubscription: azure-service-connection
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az functionapp config appsettings set \
+            --name $(functionAppName) \
+            --resource-group $(resourceGroup) \
+            --slot staging \
+            --settings \
+              DEPLOYED_VERSION="$(Build.BuildId)" \
+              DEPLOYED_BRANCH="$(Build.SourceBranchName)" \
+              DEPLOYED_AT="$(Build.BuildNumber)"
+
+# ================= VERIFY STAGING =================
+- stage: VerifyStaging
+  displayName: Verify Staging
+  dependsOn: DeployStaging
+  jobs:
+  - job: VerifyJob
+    steps:
+
+    - task: AzureCLI@2
+      displayName: Smoke test staging slot
+      inputs:
+        azureSubscription: azure-service-connection
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          # Hit health endpoint on staging slot
+          STAGING_URL="https://$(functionAppName)-staging.azurewebsites.net/api/health"
+          echo "Testing: $STAGING_URL"
+
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$STAGING_URL")
+          echo "HTTP Status: $RESPONSE"
+
+          if [ "$RESPONSE" != "200" ]; then
+            echo "Staging health check FAILED with status $RESPONSE"
+            exit 1
+          fi
+
+          echo "Staging health check PASSED"
+
+          # Print what version is on staging
+          curl -s "$STAGING_URL" | python3 -m json.tool
+
+# ================= SWAP TO PRODUCTION =================
+- stage: SwapToProduction
+  displayName: Swap Staging to Production
+  dependsOn: VerifyStaging
+  jobs:
+  - deployment: SwapJob
+    environment: production          # ← add approval gate here in Azure DevOps
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - task: AzureCLI@2
+            displayName: Swap staging to production
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Swapping staging → production..."
+
+                az functionapp deployment slot swap \
+                  --name $(functionAppName) \
+                  --resource-group $(resourceGroup) \
+                  --slot staging \
+                  --target-slot production
+
+                echo "Swap complete!"
+
+                # Verify production is running new version
+                sleep 10
+                curl -s "https://$(functionAppName).azurewebsites.net/api/health" | python3 -m json.tool
+
+          - task: AzureCLI@2
+            displayName: Tag production version
+            inputs:
+              azureSubscription: azure-service-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az functionapp config appsettings set \
+                  --name $(functionAppName) \
+                  --resource-group $(resourceGroup) \
+                  --settings \
+                    DEPLOYED_VERSION="$(Build.BuildId)" \
+                    DEPLOYED_BRANCH="$(Build.SourceBranchName)"
