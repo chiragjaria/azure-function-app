@@ -27,7 +27,7 @@ data "azurerm_resource_group" "rg2" {
 # ── Storage Account (required by Functions) ─────────────────
 data "azurerm_storage_account" "sa" {
   name                     = var.storage_account_name
-  resource_group_name = data.azurerm_resource_group_storage.rg2.name
+  resource_group_name = data.azurerm_resource_group.rg2.name
 }
 
 # ── App Service Plan (Consumption = serverless) ─────────────
