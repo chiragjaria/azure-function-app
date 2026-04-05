@@ -80,7 +80,7 @@ resource "azurerm_linux_function_app" "func" {
 # ── Give Function App access to read AKV secrets ─────────────
 data "azurerm_key_vault" "kv" {
   name                = var.key_vault_name
-  resource_group_name = data.azurerm_resource_group.rg   # your existing AKV resource group
+  resource_group_name = data.azurerm_resource_group.rg.name   # your existing AKV resource group
 }
 
 resource "azurerm_key_vault_access_policy" "func_kv_policy" {
