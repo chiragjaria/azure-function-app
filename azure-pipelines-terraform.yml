@@ -7,6 +7,7 @@ pool:
 variables:
   terraformVersion: '1.7.0'
   workingDir: '$(System.DefaultWorkingDirectory)/terraform'
+  functionAppName: 'func-fastapi-dev-cj'
 
 stages:
 # ================= TERRAFORM =================
@@ -16,13 +17,11 @@ stages:
   - job: TerraformJob
     steps:
 
-    # Step 1 - Install Terraform
     - task: TerraformInstaller@1
       displayName: Install Terraform
       inputs:
         terraformVersion: $(terraformVersion)
 
-    # Step 2 - Terraform Init
     - task: TerraformTaskV4@4
       displayName: Terraform Init
       inputs:
@@ -31,11 +30,10 @@ stages:
         workingDirectory: $(workingDir)
         backendServiceArm: azure-service-connection
         backendAzureRmResourceGroupName: rgp-dev-mes
-        backendAzureRmStorageAccountName: your-existing-storage-name  # ← your storage
-        backendAzureRmContainerName: tfstate                          # ← create this container
+        backendAzureRmStorageAccountName: stmesdev123    # ← your actual storage name
+        backendAzureRmContainerName: tfstate
         backendAzureRmKey: functions.terraform.tfstate
 
-    # Step 3 - Terraform Plan
     - task: TerraformTaskV4@4
       displayName: Terraform Plan
       inputs:
@@ -44,7 +42,6 @@ stages:
         workingDirectory: $(workingDir)
         environmentServiceNameAzureRM: azure-service-connection
 
-    # Step 4 - Terraform Apply
     - task: TerraformTaskV4@4
       displayName: Terraform Apply
       inputs:
@@ -53,3 +50,45 @@ stages:
         workingDirectory: $(workingDir)
         environmentServiceNameAzureRM: azure-service-connection
         commandOptions: '-auto-approve'
+
+# ================= DEPLOY FUNCTION CODE =================
+- stage: DeployFunctionCode
+  displayName: Deploy Function App Code
+  dependsOn: TerraformDeploy
+  jobs:
+  - job: DeployJob
+    steps:
+
+    - task: UsePythonVersion@0
+      displayName: Use Python 3.10
+      inputs:
+        versionSpec: '3.10'
+
+    # Install dependencies
+    - script: |
+        pip install --target="$(System.DefaultWorkingDirectory)/.python_packages/lib/site-packages" -r requirements.txt
+      displayName: Install dependencies
+
+    # Zip the function app for deployment
+    - task: ArchiveFiles@2
+      displayName: Zip function app
+      inputs:
+        rootFolderOrFile: $(System.DefaultWorkingDirectory)
+        includeRootFolder: false
+        archiveType: zip
+        archiveFile: $(Build.ArtifactStagingDirectory)/function.zip
+        replaceExistingArchive: true
+        excludePaths: |
+          $(System.DefaultWorkingDirectory)/terraform
+          $(System.DefaultWorkingDirectory)/.git
+
+    # Deploy zip to Function App
+    - task: AzureFunctionApp@2
+      displayName: Deploy to Azure Function App
+      inputs:
+        connectedServiceNameARM: azure-service-connection
+        appType: functionAppLinux
+        appName: $(functionAppName)
+        package: $(Build.ArtifactStagingDirectory)/function.zip
+        runtimeStack: PYTHON|3.10
+        deploymentMethod: zipDeploy
