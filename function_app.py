@@ -169,8 +169,8 @@ def index(req: func.HttpRequest) -> func.HttpResponse:
 <div class="grid-bg"></div>
 <div class="container">
   <header>
-    <div class="badge">Azure Functions + PostgreSQL</div>
-    <h1>DB <span>Manager</span></h1>
+    <div class="badge">Azure Functions + PostgreSQL — v3</div>
+    <h1>DB <span>Manager</span>v3</h1>
     <p class="subtitle">Manage your database tables and records via Azure Functions</p>
   </header>
 
@@ -671,6 +671,6 @@ def drop_table(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="health")
 def health(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse(
-        json.dumps({"status": "ok", "version": "v2", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}),
+        json.dumps({"status": "ok", "version": "v3", "deployed_by": "Azure DevOps Pipeline", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}),
         mimetype="application/json", status_code=200
     )
