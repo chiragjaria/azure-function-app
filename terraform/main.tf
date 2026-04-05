@@ -20,11 +20,14 @@ provider "azurerm" {
 data "azurerm_resource_group" "rg" {
   name     = var.resource_group_name
 }
+data "azurerm_resource_group_storage" "rg" {
+  name = var.resource_group_storage
+}
 
 # ── Storage Account (required by Functions) ─────────────────
 data "azurerm_storage_account" "sa" {
   name                     = var.storage_account_name
-  resource_group_name = data.azurerm_resource_group.rg.name
+  resource_group_name = data.azurerm_resource_group_storage.rg.name
 }
 
 # ── App Service Plan (Consumption = serverless) ─────────────
